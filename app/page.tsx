@@ -1,6 +1,15 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type Citation = {
   startIndex: number;
@@ -26,6 +35,15 @@ type UserMessage = { role: "user"; text: string };
 type ErrorMessage = { role: "error"; text: string };
 type Message = UserMessage | AssistantMessage | ErrorMessage;
 
+const EXAMPLE_PROMPTS = [
+  { emoji: "🥗", text: "減重飲食有什麼建議？" },
+  { emoji: "🧂", text: "腎臟病人飲食有哪些注意事項？" },
+  { emoji: "🥑", text: "生酮飲食適合什麼人？" },
+  { emoji: "🍱", text: "腫瘤病人需要怎麼補充營養？" },
+  { emoji: "💧", text: "需要限水的病人飲食要怎麼安排？" },
+  { emoji: "🍞", text: "低纖維飲食可以吃哪些食物？" },
+];
+
 function getOrCreatePseudoId(): string {
   if (typeof window === "undefined") return "";
   const KEY = "rag-demo-pseudo-id";
@@ -37,48 +55,90 @@ function getOrCreatePseudoId(): string {
   return id;
 }
 
-function renderAnswerWithCitations(message: AssistantMessage): React.ReactNode {
-  const { text, citations } = message;
-  if (!citations.length) return text;
-
-  // Discovery Engine returns citation offsets in UTF-8 bytes — convert to JS
-  // string indices so slicing the answer text matches the highlighted spans.
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(text);
-  const byteToCharIndex = new Map<number, number>();
-  let bytePos = 0;
-  for (let charPos = 0; charPos < text.length; charPos++) {
-    byteToCharIndex.set(bytePos, charPos);
-    bytePos += encoder.encode(text[charPos]).length;
+function fileNameFromUri(uri: string): string {
+  if (!uri) return "";
+  const noQuery = uri.split("?")[0];
+  const last = noQuery.split("/").filter(Boolean).pop() ?? "";
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
   }
-  byteToCharIndex.set(bytePos, text.length);
-  const toChar = (byteIdx: number) =>
-    byteToCharIndex.get(byteIdx) ??
-    byteToCharIndex.get(Math.min(byteIdx, bytes.length)) ??
-    text.length;
+}
 
-  const sorted = [...citations].sort((a, b) => a.startIndex - b.startIndex);
-  const parts: React.ReactNode[] = [];
-  let cursor = 0;
-  sorted.forEach((c, i) => {
-    const start = toChar(c.startIndex);
-    const end = toChar(c.endIndex);
-    if (start > cursor) parts.push(text.slice(cursor, start));
-    parts.push(
-      <span
-        key={`seg-${i}`}
-        className="bg-amber-100/60 dark:bg-amber-300/15 rounded-sm"
-      >
-        {text.slice(start, end)}
-        <sup className="ml-0.5 text-[0.65rem] text-amber-700 dark:text-amber-300">
-          {c.sourceIndices.map((s) => `[${s + 1}]`).join("")}
-        </sup>
-      </span>,
-    );
-    cursor = end;
-  });
-  if (cursor < text.length) parts.push(text.slice(cursor));
-  return parts;
+function fileTypeBadge(uri: string): { label: string; tone: string } {
+  const lower = uri.toLowerCase();
+  if (lower.endsWith(".pdf"))
+    return { label: "PDF", tone: "bg-rose-500/15 text-rose-600 dark:text-rose-300" };
+  if (lower.endsWith(".pptx") || lower.endsWith(".ppt"))
+    return { label: "PPT", tone: "bg-orange-500/15 text-orange-600 dark:text-orange-300" };
+  if (lower.endsWith(".html") || lower.endsWith(".htm"))
+    return { label: "HTML", tone: "bg-sky-500/15 text-sky-600 dark:text-sky-300" };
+  if (lower.endsWith(".docx") || lower.endsWith(".doc"))
+    return { label: "DOC", tone: "bg-blue-500/15 text-blue-600 dark:text-blue-300" };
+  return { label: "DOC", tone: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300" };
+}
+
+function BotIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <path
+        d="M12 2v3M5 9a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V9Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <circle cx="9.5" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="14.5" cy="12" r="1.2" fill="currentColor" />
+      <path
+        d="M3 12h2M19 12h2"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function UserIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M5 20a7 7 0 0 1 14 0"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function SendIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <path
+        d="M4 12 20 4l-3 16-4.5-6.5L4 12Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ResetIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <path
+        d="M4 12a8 8 0 1 0 2.5-5.8M4 4v4h4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 export default function Page() {
@@ -88,6 +148,7 @@ export default function Page() {
   const [sessionName, setSessionName] = useState<string | undefined>(undefined);
   const userPseudoId = useMemo(getOrCreatePseudoId, []);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -96,15 +157,19 @@ export default function Page() {
     });
   }, [messages, pending]);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    const query = input.trim();
-    if (!query || pending) return;
+  // Auto-grow textarea
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+  }, [input]);
 
+  async function send(query: string) {
+    if (!query || pending) return;
     setMessages((m) => [...m, { role: "user", text: query }]);
     setInput("");
     setPending(true);
-
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -133,9 +198,21 @@ export default function Page() {
       ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setMessages((m) => [...m, { role: "error", text: `錯誤：${msg}` }]);
+      setMessages((m) => [...m, { role: "error", text: `查詢失敗：${msg}` }]);
     } finally {
       setPending(false);
+    }
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    await send(input.trim());
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      send(input.trim());
     }
   }
 
@@ -144,125 +221,211 @@ export default function Page() {
     setMessages([]);
   }
 
+  const hasMessages = messages.length > 0;
+
   return (
-    <main className="flex flex-1 flex-col mx-auto w-full max-w-3xl px-4 py-6">
-      <header className="flex items-baseline justify-between border-b border-black/5 dark:border-white/10 pb-3 mb-4">
-        <div>
-          <h1 className="text-xl font-semibold">RAG Q&A Demo</h1>
-          <p className="text-xs text-black/60 dark:text-white/60 mt-1">
-            根據已索引的 PDF / PPTX / HTML 回答問題，附帶引用
-          </p>
+    <div className="flex flex-1 flex-col">
+      {/* Header */}
+      <header className="sticky top-0 z-10 backdrop-blur bg-[var(--background)]/80 border-b border-[var(--border)]">
+        <div className="mx-auto max-w-3xl px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 grid place-items-center text-white shadow-sm">
+              <BotIcon className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-[15px] font-semibold leading-tight">
+                專業資料問答助理
+              </h1>
+              <p className="text-[11px] text-[var(--muted)] leading-tight">
+                由 Vertex AI Search 驅動 · 答案附帶資料來源
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleNewSession}
+            disabled={pending || !hasMessages}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-black/5 dark:hover:bg-white/5 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title="清空對話"
+          >
+            <ResetIcon className="h-3.5 w-3.5" />
+            新對話
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={handleNewSession}
-          disabled={pending || messages.length === 0}
-          className="text-xs px-3 py-1.5 rounded-md border border-black/10 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          新對話
-        </button>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-5 pr-1">
-        {messages.length === 0 && (
-          <div className="text-sm text-black/50 dark:text-white/50 mt-12 text-center">
-            試試看：
-            <ul className="mt-3 space-y-1.5">
-              <li>「減重飲食有什麼建議？」</li>
-              <li>「腎臟病人飲食有哪些注意事項？」</li>
-              <li>「生酮飲食適合什麼人？」</li>
-            </ul>
-          </div>
-        )}
+      {/* Chat area */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-4 py-6">
+          {!hasMessages && (
+            <div className="text-center pt-8 pb-4">
+              <div className="mx-auto h-14 w-14 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 grid place-items-center text-white shadow-lg shadow-purple-500/20">
+                <BotIcon className="h-7 w-7" />
+              </div>
+              <h2 className="mt-4 text-lg font-semibold">想問什麼問題？</h2>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                從你上傳的 PDF / PPTX / HTML 中找答案，並附上引用片段
+              </p>
 
-        {messages.map((m, i) => {
-          if (m.role === "user") {
-            return (
-              <div key={i} className="flex justify-end">
-                <div className="max-w-[80%] rounded-2xl bg-blue-600 text-white px-4 py-2 whitespace-pre-wrap text-sm">
-                  {m.text}
-                </div>
+              <div className="mt-7 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {EXAMPLE_PROMPTS.map((p) => (
+                  <button
+                    key={p.text}
+                    type="button"
+                    onClick={() => send(p.text)}
+                    className="group text-left flex items-start gap-3 p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:border-purple-400/60 hover:shadow-sm transition"
+                  >
+                    <span className="text-xl leading-none">{p.emoji}</span>
+                    <span className="text-sm leading-snug group-hover:text-purple-600 dark:group-hover:text-purple-300 transition">
+                      {p.text}
+                    </span>
+                  </button>
+                ))}
               </div>
-            );
-          }
-          if (m.role === "error") {
-            return (
-              <div key={i} className="flex justify-start">
-                <div className="max-w-[90%] rounded-2xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-4 py-2 text-sm whitespace-pre-wrap">
-                  {m.text}
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div key={i} className="flex flex-col items-start gap-2">
-              <div className="max-w-full rounded-2xl bg-black/5 dark:bg-white/5 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
-                {renderAnswerWithCitations(m)}
-              </div>
-              {m.references.length > 0 && (
-                <details className="text-xs w-full">
-                  <summary className="cursor-pointer text-black/60 dark:text-white/60 hover:text-black/80 dark:hover:text-white/80">
-                    引用來源（{m.references.length}）
-                  </summary>
-                  <ol className="mt-2 space-y-2 pl-4 list-decimal">
-                    {m.references.map((r) => (
-                      <li key={r.index}>
-                        <div className="font-medium break-all">
-                          {r.title || r.uri || `Reference ${r.index + 1}`}
-                        </div>
-                        {r.uri && (
-                          <div className="text-black/50 dark:text-white/50 break-all">
-                            {r.uri}
-                          </div>
-                        )}
-                        {r.snippet && (
-                          <div className="mt-1 text-black/70 dark:text-white/70 line-clamp-3">
-                            {r.snippet}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-              )}
             </div>
-          );
-        })}
+          )}
 
-        {pending && (
-          <div className="flex items-center gap-2 text-sm text-black/50 dark:text-white/50">
-            <span className="h-2 w-2 rounded-full bg-current animate-pulse" />
-            正在查詢資料並產生回答…
+          <div className="space-y-5">
+            {messages.map((m, i) => {
+              if (m.role === "user") {
+                return (
+                  <div key={i} className="msg-in flex justify-end gap-2.5">
+                    <div className="max-w-[80%] rounded-2xl rounded-tr-md bg-gradient-to-br from-indigo-600 to-purple-600 text-white px-4 py-2.5 whitespace-pre-wrap text-sm shadow-sm">
+                      {m.text}
+                    </div>
+                    <div className="h-8 w-8 shrink-0 rounded-full bg-zinc-200 dark:bg-zinc-700 grid place-items-center text-zinc-600 dark:text-zinc-300">
+                      <UserIcon className="h-4 w-4" />
+                    </div>
+                  </div>
+                );
+              }
+              if (m.role === "error") {
+                return (
+                  <div key={i} className="msg-in flex justify-start gap-2.5">
+                    <div className="h-8 w-8 shrink-0 rounded-full bg-red-500/15 grid place-items-center text-red-600 dark:text-red-300">
+                      !
+                    </div>
+                    <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-4 py-2.5 text-sm">
+                      {m.text}
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div key={i} className="msg-in flex items-start gap-2.5">
+                  <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 grid place-items-center text-white shadow-sm">
+                    <BotIcon className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-3">
+                    <div className="rounded-2xl rounded-tl-md bg-[var(--surface)] border border-[var(--border)] px-4 py-3 shadow-sm">
+                      <div className="prose-chat text-[14.5px] leading-relaxed">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {m.text}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                    {m.references.length > 0 && (
+                      <details className="group">
+                        <summary className="cursor-pointer text-xs text-[var(--muted)] hover:text-foreground transition flex items-center gap-1.5 select-none">
+                          <svg
+                            viewBox="0 0 20 20"
+                            className="h-3.5 w-3.5 transition group-open:rotate-90"
+                            fill="currentColor"
+                          >
+                            <path d="M7 5l6 5-6 5V5z" />
+                          </svg>
+                          來源資料 · {m.references.length} 份
+                        </summary>
+                        <ol className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {m.references.map((r) => {
+                            const file = fileNameFromUri(r.uri);
+                            const badge = fileTypeBadge(r.uri);
+                            return (
+                              <li
+                                key={r.index}
+                                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-xs"
+                              >
+                                <div className="flex items-start gap-2">
+                                  <span
+                                    className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold ${badge.tone}`}
+                                  >
+                                    {badge.label}
+                                  </span>
+                                  <span className="font-medium leading-snug break-all">
+                                    {r.title || file || `Reference ${r.index + 1}`}
+                                  </span>
+                                </div>
+                                {file && r.title && file !== r.title && (
+                                  <div className="mt-1 text-[var(--muted)] break-all">
+                                    {file}
+                                  </div>
+                                )}
+                                {r.snippet && (
+                                  <div className="mt-2 text-[var(--muted)] line-clamp-3 leading-relaxed">
+                                    {r.snippet}
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {pending && (
+              <div className="msg-in flex items-start gap-2.5">
+                <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 grid place-items-center text-white shadow-sm">
+                  <BotIcon className="h-4 w-4" />
+                </div>
+                <div className="rounded-2xl rounded-tl-md bg-[var(--surface)] border border-[var(--border)] px-4 py-3 shadow-sm">
+                  <div className="flex gap-1 items-center text-[var(--muted)]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.3s]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.15s]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce" />
+                    <span className="ml-2 text-xs">正在查資料…</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="mt-4 flex items-end gap-2 border-t border-black/5 dark:border-white/10 pt-3"
-      >
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit(e as unknown as FormEvent);
-            }
-          }}
-          placeholder="輸入問題（Enter 送出，Shift+Enter 換行）"
-          rows={2}
-          disabled={pending}
-          className="flex-1 resize-none rounded-lg border border-black/10 dark:border-white/15 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={pending || !input.trim()}
-          className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/40 text-white px-4 py-2 text-sm font-medium"
+      {/* Composer */}
+      <div className="sticky bottom-0 border-t border-[var(--border)] bg-[var(--background)]/85 backdrop-blur">
+        <form
+          onSubmit={handleSubmit}
+          className="mx-auto max-w-3xl px-4 py-3"
         >
-          送出
-        </button>
-      </form>
-    </main>
+          <div className="flex items-end gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] focus-within:border-purple-400/60 focus-within:shadow-sm transition px-3 py-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="輸入你的問題…（Enter 送出，Shift+Enter 換行）"
+              rows={1}
+              disabled={pending}
+              className="flex-1 resize-none bg-transparent text-sm leading-relaxed py-1.5 focus:outline-none disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={pending || !input.trim()}
+              className="h-9 w-9 shrink-0 grid place-items-center rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white disabled:from-zinc-300 disabled:to-zinc-300 dark:disabled:from-zinc-700 dark:disabled:to-zinc-700 disabled:cursor-not-allowed shadow-sm hover:shadow transition"
+              aria-label="送出"
+            >
+              <SendIcon className="h-4 w-4" />
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-center text-[var(--muted)]">
+            回答由 AI 根據已索引的文件生成，請以原始資料為準
+          </p>
+        </form>
+      </div>
+    </div>
   );
 }

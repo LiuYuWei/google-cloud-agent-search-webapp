@@ -1,8 +1,12 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 :root {
-  --background: #ffffff;
+  --background: #fafafa;
   --foreground: #171717;
+  --surface: #ffffff;
+  --border: rgba(0, 0, 0, 0.08);
+  --muted: rgba(0, 0, 0, 0.55);
 }
 
 @theme inline {
@@ -14,13 +18,50 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
+    --background: #0b0b0f;
     --foreground: #ededed;
+    --surface: #15151b;
+    --border: rgba(255, 255, 255, 0.1);
+    --muted: rgba(255, 255, 255, 0.55);
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+
+/* Smooth markdown look inside chat bubbles */
+.prose-chat {
+  --tw-prose-bullets: currentColor;
+}
+.prose-chat :where(p):not(:where([class~="not-prose"] *)) {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+.prose-chat :where(ul, ol):not(:where([class~="not-prose"] *)) {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-inline-start: 1.5em;
+}
+.prose-chat :where(li):not(:where([class~="not-prose"] *)) {
+  margin-top: 0.15em;
+  margin-bottom: 0.15em;
+}
+.prose-chat :where(h1, h2, h3, h4):not(:where([class~="not-prose"] *)) {
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+  font-weight: 600;
+}
+.prose-chat :where(strong):not(:where([class~="not-prose"] *)) {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* subtle fade-in for new messages */
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.msg-in { animation: msg-in 220ms ease-out both; }
