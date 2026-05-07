@@ -1,5 +1,7 @@
 # Google Cloud Agent Search Web App
 
+> 繁體中文版：[README.zh-TW.md](./README.zh-TW.md)
+
 A Next.js demo that uses Google Cloud **Vertex AI Search** (Discovery Engine) to
 answer student questions grounded in your own documents (PDF / PPTX / HTML).
 
