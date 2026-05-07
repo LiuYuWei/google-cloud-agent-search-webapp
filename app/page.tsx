@@ -86,19 +86,42 @@ function buildByteToCharIndex(text: string): (byteIdx: number) => number {
 
 const CITE_RE = /⟦CIT:([\d,]+)⟧/g;
 
+// If charPos lands inside a markdown table row (line starts with `|`),
+// move it past the entire contiguous block of table rows so the sentinel
+// doesn't break GFM table parsing.
+function snapPastTable(text: string, charPos: number): number {
+  let lineStart = charPos;
+  while (lineStart > 0 && text[lineStart - 1] !== "\n") lineStart--;
+  let lineEnd = charPos;
+  while (lineEnd < text.length && text[lineEnd] !== "\n") lineEnd++;
+  const currentLine = text.slice(lineStart, lineEnd).trimStart();
+  if (!currentLine.startsWith("|")) return charPos;
+  // Walk forward as long as following non-empty lines are also table rows.
+  let pos = lineEnd;
+  while (pos < text.length) {
+    const nextStart = pos + 1;
+    let nextEnd = nextStart;
+    while (nextEnd < text.length && text[nextEnd] !== "\n") nextEnd++;
+    const nextLine = text.slice(nextStart, nextEnd).trimStart();
+    if (!nextLine.startsWith("|")) break;
+    pos = nextEnd;
+  }
+  return pos;
+}
+
 // Insert sentinel tokens at each citation's end position so the citation
 // markers ride along through the markdown renderer untouched as plain text.
 function injectCitationSentinels(text: string, citations: Citation[]): string {
   if (!citations.length) return text;
   const toChar = buildByteToCharIndex(text);
-  const sorted = [...citations].sort((a, b) => b.endIndex - a.endIndex);
+  const insertions = citations.map((c) => ({
+    pos: snapPastTable(text, toChar(c.endIndex)),
+    marker: `⟦CIT:${c.sourceIndices.join(",")}⟧`,
+  }));
+  insertions.sort((a, b) => b.pos - a.pos);
   let out = text;
-  for (const c of sorted) {
-    const charEnd = toChar(c.endIndex);
-    out =
-      out.slice(0, charEnd) +
-      `⟦CIT:${c.sourceIndices.join(",")}⟧` +
-      out.slice(charEnd);
+  for (const ins of insertions) {
+    out = out.slice(0, ins.pos) + ins.marker + out.slice(ins.pos);
   }
   return out;
 }
