@@ -54,6 +54,9 @@ npm run dev
 
 開啟 http://localhost:3000。
 
+專案附有 `Makefile` 包好常用流程，執行 `make help` 可列出所有 target
+（`make dev`、`make gcp-auth`、`make deploy` 等）。
+
 ## 環境變數
 
 | 變數 | 預設值 | 說明 |

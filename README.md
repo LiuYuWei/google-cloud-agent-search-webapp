@@ -55,6 +55,9 @@ npm run dev
 
 Open http://localhost:3000.
 
+A `Makefile` wraps the most common workflows — run `make help` to list targets
+(`make dev`, `make gcp-auth`, `make deploy`, …).
+
 ## Environment variables
 
 | Var | Default | Description |
