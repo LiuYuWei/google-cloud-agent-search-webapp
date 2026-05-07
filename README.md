@@ -62,6 +62,7 @@ Open http://localhost:3000.
 | `DISCOVERY_ENGINE_COLLECTION` | `default_collection` | |
 | `DISCOVERY_ENGINE_ID` | (required) | The engine ID, e.g. `your-engine_1234567890` |
 | `DISCOVERY_ENGINE_SERVING_CONFIG` | `default_search` | |
+| `ANSWER_PREAMBLE` | (built-in) | Override the system prompt. Defaults to a Taiwan Traditional Chinese preamble. |
 
 ## Deploy to Cloud Run
 

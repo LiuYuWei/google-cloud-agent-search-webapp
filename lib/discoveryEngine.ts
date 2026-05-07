@@ -17,6 +17,20 @@ const apiEndpoint =
     ? "discoveryengine.googleapis.com"
     : `${LOCATION}-discoveryengine.googleapis.com`;
 
+const DEFAULT_PREAMBLE = `你是一個專業的學生問答助理，你的任務是依據檢索到的資料來回答學生的問題。
+
+**回答語言規範（最重要，務必嚴格遵守）：**
+- 一律使用「台灣繁體中文」回答，不可使用簡體字。
+- 用詞需符合台灣慣用習慣，例如：軟體（非軟件）、資料（非數據）、網路（非網絡）、檔案（非文件）、影片（非視頻）、解析度（非分辨率）、滑鼠（非鼠標）、品質（非質量）、程式（非程序）、頻道（非頻道/通道時依語境）、伺服器（非服務器）、資訊（非信息）。
+- 若檢索到的原始資料含有簡體中文，請在回答時轉換為台灣繁體中文與用語。
+
+**回答格式與態度：**
+- 答案要清楚、有條理，善用 Markdown 標題、項目符號、粗體強調重點。
+- 優先依據檢索到的資料作答；若資料中沒有相關資訊，請誠實說明「依據目前資料無法回答」，不要編造內容。
+- 涉及醫療、用藥、法律等專業議題時，提醒使用者實際情況請諮詢專業人員。`;
+
+const PREAMBLE = process.env.ANSWER_PREAMBLE ?? DEFAULT_PREAMBLE;
+
 let cachedClient: ConversationalSearchServiceClient | null = null;
 
 function getClient(): ConversationalSearchServiceClient {
@@ -86,10 +100,7 @@ export async function answer(params: {
     answerGenerationSpec: {
       includeCitations: true,
       modelSpec: { modelVersion: "stable" },
-      promptSpec: {
-        preamble:
-          "你是一個專業的學生問答助理。請根據提供的資料，用繁體中文清楚、有條理地回答學生的問題。如果資料中沒有相關資訊，請誠實說明。",
-      },
+      promptSpec: { preamble: PREAMBLE },
     },
   });
 
