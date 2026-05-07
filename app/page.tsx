@@ -2,13 +2,15 @@
 
 import {
   FormEvent,
+  Fragment,
   KeyboardEvent,
+  ReactNode,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type Citation = {
@@ -66,6 +68,41 @@ function fileNameFromUri(uri: string): string {
   }
 }
 
+// Discovery Engine returns citation startIndex / endIndex as UTF-8 byte
+// offsets into answerText. JS strings are UTF-16, so we need a byte→char
+// map to slice/insert at the right position.
+function buildByteToCharIndex(text: string): (byteIdx: number) => number {
+  const encoder = new TextEncoder();
+  const map = new Map<number, number>();
+  let bytePos = 0;
+  for (let charPos = 0; charPos < text.length; charPos++) {
+    map.set(bytePos, charPos);
+    bytePos += encoder.encode(text[charPos]).length;
+  }
+  map.set(bytePos, text.length);
+  return (byteIdx: number) =>
+    map.get(byteIdx) ?? map.get(Math.min(byteIdx, bytePos)) ?? text.length;
+}
+
+const CITE_RE = /⟦CIT:([\d,]+)⟧/g;
+
+// Insert sentinel tokens at each citation's end position so the citation
+// markers ride along through the markdown renderer untouched as plain text.
+function injectCitationSentinels(text: string, citations: Citation[]): string {
+  if (!citations.length) return text;
+  const toChar = buildByteToCharIndex(text);
+  const sorted = [...citations].sort((a, b) => b.endIndex - a.endIndex);
+  let out = text;
+  for (const c of sorted) {
+    const charEnd = toChar(c.endIndex);
+    out =
+      out.slice(0, charEnd) +
+      `⟦CIT:${c.sourceIndices.join(",")}⟧` +
+      out.slice(charEnd);
+  }
+  return out;
+}
+
 function fileTypeBadge(uri: string): { label: string; tone: string } {
   const lower = uri.toLowerCase();
   if (lower.endsWith(".pdf"))
@@ -77,6 +114,84 @@ function fileTypeBadge(uri: string): { label: string; tone: string } {
   if (lower.endsWith(".docx") || lower.endsWith(".doc"))
     return { label: "DOC", tone: "bg-blue-500/15 text-blue-600 dark:text-blue-300" };
   return { label: "DOC", tone: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300" };
+}
+
+function CitationBadge({
+  ids,
+  references,
+}: {
+  ids: number[];
+  references: Reference[];
+}) {
+  const tooltip = ids
+    .map((i) => {
+      const r = references[i];
+      if (!r) return `[${i + 1}]`;
+      const file = fileNameFromUri(r.uri) || r.title || `Reference ${i + 1}`;
+      return `[${i + 1}] ${file}`;
+    })
+    .join("\n");
+  return (
+    <sup
+      title={tooltip}
+      className="not-prose mx-0.5 inline-flex items-center px-1 py-px rounded bg-purple-500/12 text-purple-700 dark:text-purple-300 text-[10px] font-semibold align-super cursor-help no-underline"
+    >
+      [{ids.map((i) => i + 1).join(",")}]
+    </sup>
+  );
+}
+
+function decorateChildren(
+  children: ReactNode,
+  references: Reference[],
+): ReactNode {
+  const list = Array.isArray(children) ? children : [children];
+  const out: ReactNode[] = [];
+  list.forEach((child, idx) => {
+    if (typeof child !== "string") {
+      out.push(child);
+      return;
+    }
+    let last = 0;
+    let m: RegExpExecArray | null;
+    CITE_RE.lastIndex = 0;
+    while ((m = CITE_RE.exec(child)) !== null) {
+      if (m.index > last) out.push(child.slice(last, m.index));
+      const ids = m[1].split(",").map((n) => Number(n));
+      out.push(
+        <CitationBadge
+          key={`cite-${idx}-${m.index}`}
+          ids={ids}
+          references={references}
+        />,
+      );
+      last = CITE_RE.lastIndex;
+    }
+    if (last < child.length) {
+      out.push(<Fragment key={`tail-${idx}-${last}`}>{child.slice(last)}</Fragment>);
+    }
+  });
+  return out;
+}
+
+function buildMarkdownComponents(references: Reference[]): Components {
+  const wrap = (Tag: keyof Components) =>
+    (props: { children?: ReactNode }) => {
+      const Component = Tag as unknown as React.ElementType;
+      return <Component>{decorateChildren(props.children, references)}</Component>;
+    };
+  return {
+    p: wrap("p"),
+    li: wrap("li"),
+    strong: wrap("strong"),
+    em: wrap("em"),
+    h1: wrap("h1"),
+    h2: wrap("h2"),
+    h3: wrap("h3"),
+    h4: wrap("h4"),
+    td: wrap("td"),
+    th: wrap("th"),
+  };
 }
 
 function BotIcon({ className = "" }: { className?: string }) {
@@ -146,9 +261,19 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [sessionName, setSessionName] = useState<string | undefined>(undefined);
+  const [showCitations, setShowCitations] = useState(true);
   const userPseudoId = useMemo(getOrCreatePseudoId, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Restore the citation toggle preference on mount
+  useEffect(() => {
+    const saved = window.localStorage.getItem("rag-show-citations");
+    if (saved !== null) setShowCitations(saved === "true");
+  }, []);
+  useEffect(() => {
+    window.localStorage.setItem("rag-show-citations", String(showCitations));
+  }, [showCitations]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -241,16 +366,41 @@ export default function Page() {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleNewSession}
-            disabled={pending || !hasMessages}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-black/5 dark:hover:bg-white/5 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            title="清空對話"
-          >
-            <ResetIcon className="h-3.5 w-3.5" />
-            新對話
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showCitations}
+              onClick={() => setShowCitations((v) => !v)}
+              className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border)] hover:bg-black/5 dark:hover:bg-white/5 transition"
+              title={showCitations ? "目前顯示來源編號，點擊隱藏" : "目前隱藏來源編號，點擊顯示"}
+            >
+              <span
+                className={`relative inline-block h-4 w-7 rounded-full transition ${
+                  showCitations
+                    ? "bg-purple-600"
+                    : "bg-zinc-300 dark:bg-zinc-600"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition ${
+                    showCitations ? "left-3.5" : "left-0.5"
+                  }`}
+                />
+              </span>
+              <span className="hidden sm:inline">標注來源</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleNewSession}
+              disabled={pending || !hasMessages}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-black/5 dark:hover:bg-white/5 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              title="清空對話"
+            >
+              <ResetIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">新對話</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -311,6 +461,12 @@ export default function Page() {
                   </div>
                 );
               }
+              const renderedText = showCitations
+                ? injectCitationSentinels(m.text, m.citations)
+                : m.text;
+              const mdComponents = showCitations
+                ? buildMarkdownComponents(m.references)
+                : undefined;
               return (
                 <div key={i} className="msg-in flex items-start gap-2.5">
                   <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 grid place-items-center text-white shadow-sm">
@@ -319,12 +475,15 @@ export default function Page() {
                   <div className="flex-1 min-w-0 space-y-3">
                     <div className="rounded-2xl rounded-tl-md bg-[var(--surface)] border border-[var(--border)] px-4 py-3 shadow-sm">
                       <div className="prose-chat text-[14.5px] leading-relaxed">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {m.text}
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={mdComponents}
+                        >
+                          {renderedText}
                         </ReactMarkdown>
                       </div>
                     </div>
-                    {m.references.length > 0 && (
+                    {showCitations && m.references.length > 0 && (
                       <details className="group">
                         <summary className="cursor-pointer text-xs text-[var(--muted)] hover:text-foreground transition flex items-center gap-1.5 select-none">
                           <svg
